@@ -1,0 +1,4 @@
+dist/
+.stage/
+*.tar.gz
+*.sha256

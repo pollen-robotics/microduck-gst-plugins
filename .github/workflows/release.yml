@@ -1,0 +1,86 @@
+# Build the plugins and attach them to a release.
+#
+# Runs on a **native arm64 runner inside a `debian:trixie` container**, which is the whole point
+# of this repository. Both halves matter:
+#
+#   - arm64, so nothing is cross-compiled. The alternative — multiarch on an x86 runner, or a
+#     sysroot plus a meson cross file — is the machinery this repo exists to avoid, and it links
+#     against an approximation of the target rather than the target.
+#   - debian:trixie, so the plugins link against the **exact** library versions the robot has.
+#     The runner's own Ubuntu userland has a different GStreamer, and a plugin built against it
+#     would work right up until it did not.
+#
+# arm64 runners are free on public repositories, which is why this repository is public. The other
+# reason is more important: a release asset here is fetched by a robot's provisioning and by the
+# updater's preinstall hook, and that hook runs with a cleared environment and no token. A private
+# repository would break it.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  # So the build can be exercised without cutting a release — the failure mode of a workflow that
+  # only ever runs on a tag is discovering it is broken at the moment you need it.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    container:
+      image: debian:trixie
+    steps:
+      # `actions/checkout` needs git, and a bare trixie image has none. Installed before the
+      # checkout rather than in build.sh, which cannot run before the repository is there.
+      - name: Bootstrap the container
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends git ca-certificates curl
+
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: sh scripts/build.sh both
+
+      # Named with the tag when there is one, so a downloaded artifact is identifiable after it
+      # leaves the browser. `github.ref_name` is the tag on a tag push and the branch otherwise.
+      - name: Package
+        id: package
+        run: |
+          ver="${{ github.ref_name }}"
+          name="microduck-gst-plugins-${ver}-aarch64"
+          mv dist "$name"
+          tar -czf "${name}.tar.gz" "$name"
+          sha256sum "${name}.tar.gz" > "${name}.tar.gz.sha256"
+          echo "name=${name}" >> "$GITHUB_OUTPUT"
+          echo "== contents =="
+          tar -tzf "${name}.tar.gz"
+          cat "${name}.tar.gz.sha256"
+
+      # Always uploaded, tag or not: a workflow_dispatch run is for looking at what came out.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.name }}
+          path: |
+            ${{ steps.package.outputs.name }}.tar.gz
+            ${{ steps.package.outputs.name }}.tar.gz.sha256
+
+      # The tarball plus its sha256 as separate assets: a consumer fetches both, verifies, then
+      # unpacks. One download and one integrity check, rather than one per plugin.
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          apt-get install -y -qq --no-install-recommends gh
+          gh release create "${{ github.ref_name }}" \
+            --title "${{ github.ref_name }}" \
+            --notes-file "${{ steps.package.outputs.name }}/MANIFEST" \
+            --repo "${{ github.repository }}" \
+            || echo "release already exists; uploading into it"
+          gh release upload "${{ github.ref_name }}" \
+            "${{ steps.package.outputs.name }}.tar.gz" \
+            "${{ steps.package.outputs.name }}.tar.gz.sha256" \
+            --clobber --repo "${{ github.repository }}"
