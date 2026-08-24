@@ -7,7 +7,7 @@ Two plugins, for two unrelated reasons. Neither is packaged anywhere we can inst
 
 | plugin | provides | why it is here |
 |---|---|---|
-| `libgstrockchipmpp.so` | `mpph264enc`, `mpph265enc`, `mppjpegenc`, `mppvp8enc`, `mppvideodec`, `mppjpegdec` | Debian ships no Rockchip encoder in any suite, and Radxa's `gstreamer1.0-rockchip1_1.14-4` is **decode-only** — measured on a Zero 3W: `mppvideodec` and `mppjpegdec`, nothing else. 1.14.4 predates the encoders. |
+| `libgstrockchipmpp.so` | `mpph264enc`, `mpph265enc`, `mppjpegenc`, `mppvp8enc`, `mppvideodec`, `mppjpegdec` | Debian ships no Rockchip encoder in any suite. Radxa's own `gstreamer1.0-rockchip1_1.14-4` does contain them, so this build is about the pin, dropping `libx11-6`, and riding along with the plugin below — see [below](#the-permission-trap-that-hid-all-of-this). |
 | `libgstrswebrtc.so`, `libgstrsrtp.so` | `webrtcsink`, `webrtcsrc`, `rsrtp*` | `gstreamer1.0-plugins-rs` does not exist in **any** Debian suite — not trixie, backports, sid or experimental. |
 
 `webrtcbin` is **not** here: it comes from `gstreamer1.0-plugins-bad` in Debian and needs no
@@ -33,6 +33,24 @@ Building rather than taking a third-party binary also buys one concrete thing be
 `rkximage` and `kmssrc`, the X11 and KMS *sinks* in the same source tree, are **disabled**. A
 headless robot has no use for either, and they are why the prebuilt Radxa deb depends on
 `libx11-6`.
+
+## The permission trap that hid all of this
+
+`/dev/mpp_service` arrives as `0600 root:root`, and **an MPP GStreamer plugin registers its
+decoders unconditionally but probes MPP before registering its encoders.** With the node
+unreadable the probe fails and the encoders are silently omitted — no error, no log line.
+
+That one cause produced four separate misleading results while this was being worked out:
+
+- `mpi_enc_test` wrote an empty file and **exited 0**.
+- Radxa's `1.14-4` looked decode-only. It is not; `strings` on its `.so` lists every encoder.
+- A third-party `1.14-8` deb installed cleanly and still showed no `mpph264enc`.
+- This repository's own CI build shows only `mppjpegdec` and `mppvideodec`, because a container
+  has no `/dev/mpp_service` either. **That is expected, not a failed build.**
+
+So: a plugin that lists only decoders is evidence about the *device node*, not about the plugin. A
+non-root process needs a udev rule giving the node a group — mode `0660`, group `video` — and only
+then does `gst-inspect-1.0 mpph264enc` mean anything.
 
 ## Consuming a release
 
@@ -60,10 +78,9 @@ The plugins link against libraries a robot needs installed:
   [`pins.env`](pins.env). Not in Debian.
 - `libgstreamer1.0-0`, `libgstreamer-plugins-base1.0-0`, `libglib2.0-0`, `libdrm2` — Debian.
 
-`mpph264enc` also needs **read/write access to `/dev/mpp_service`**, which arrives as `0600
-root:root`. The failure that causes is silent in two different ways: `mpi_enc_test` writes an empty
-file and exits 0, and this plugin registers its *decoders* while omitting the *encoders*, because
-registration probes MPP. A non-root process needs a udev rule giving the node a group.
+`mpph264enc` also needs **read/write access to `/dev/mpp_service`** — see
+[the permission trap](#the-permission-trap-that-hid-all-of-this), which is the single most
+misleading thing about this stack.
 
 ## Bumping a pin
 
