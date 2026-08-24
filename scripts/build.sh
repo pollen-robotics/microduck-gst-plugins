@@ -174,9 +174,26 @@ build_webrtc() {
         || die "cannot clone ${GST_PLUGINS_RS_REPO} at ${GST_PLUGINS_RS_REF}"
 
     install -d "$DIST" "$STAGE"
-    # Two plugins, not one: Pollen's desktop app ships `libgstrswebrtc.so` *and*
-    # `libgstrsrtp.so`, and the same stack wants both.
-    for crate in gst-plugin-webrtc gst-plugin-rsrtp; do
+
+    # Two crates, not one: the same stack wants `libgstrswebrtc.so` *and* `libgstrsrtp.so`.
+    #
+    # `gst-plugin-rtp`, whose lib is named `gstrsrtp` — the plugin filename and the crate name
+    # differ, which is how the wrong one gets used. Pollen's reachy-mini-desktop-app README
+    # documents `cargo cinstall -p gst-plugin-rsrtp`, and no such package exists in 0.14.5 or
+    # 0.15.3; taking that name on trust cost a build. Read the crate's Cargo.toml, not a README.
+    CRATES="gst-plugin-webrtc gst-plugin-rtp"
+
+    # Checked before anything is compiled. `cargo cinstall` validates the package name only when
+    # it gets to it, so a typo in the second crate is discovered after the first has spent three
+    # minutes building — which is exactly what happened.
+    bad=""
+    for crate in $CRATES; do
+        ( cd "${src}/s" && cargo pkgid -p "$crate" >/dev/null 2>&1 ) || bad="$bad $crate"
+    done
+    [ -z "$bad" ] || die "not workspace members of gst-plugins-rs ${GST_PLUGINS_RS_REF}:${bad}
+  Package names move between releases. Check net/*/Cargo.toml at that tag."
+
+    for crate in $CRATES; do
         say "cargo cinstall ${crate}"
         ( cd "${src}/s" && cargo cinstall -p "$crate" --prefix "$STAGE" --libdir lib --release ) \
             >"${src}/${crate}.log" 2>&1 || {
