@@ -8,7 +8,7 @@ Two plugins, for two unrelated reasons. Neither is packaged anywhere we can inst
 | plugin | provides | why it is here |
 |---|---|---|
 | `libgstrockchipmpp.so` | `mpph264enc`, `mpph265enc`, `mppjpegenc`, `mppvp8enc`, `mppvideodec`, `mppjpegdec` | Debian ships no Rockchip encoder in any suite. Radxa's own `gstreamer1.0-rockchip1_1.14-4` does contain them, so this build is about the pin, dropping `libx11-6`, and riding along with the plugin below — see [below](#the-permission-trap-that-hid-all-of-this). |
-| `libgstrswebrtc.so`, `libgstrsrtp.so` | `webrtcsink`, `webrtcsrc`, `rsrtp*` | `gstreamer1.0-plugins-rs` does not exist in **any** Debian suite — not trixie, backports, sid or experimental. |
+| `libgstrswebrtc.so`, `libgstrsrtp.so` | `webrtcsink`, `webrtcsrc`, `rsrtp*` | `gstreamer1.0-plugins-rs` does not exist in **any** Debian suite — not trixie, backports, sid or experimental. Patched; see [`patches/`](patches/). |
 
 `webrtcbin` is **not** here: it comes from `gstreamer1.0-plugins-bad` in Debian and needs no
 build.
@@ -104,8 +104,18 @@ These are binaries built from other people's source, so where that source is mat
   [the upstream repository](https://gitlab.freedesktop.org/gstreamer/gst-plugins-rs) at the tag in
   `pins.env`.
 
-Nothing here is modified — no patches, no forks. Each release's `MANIFEST` names the repository
-and the exact ref per plugin, which is both the licence answer and the reason a media bug found on
+**`gst-plugins-rs` is patched, and that matters for more than tidiness.** MPL-2.0 asks that
+modifications be identifiable, so it is stated here, listed in [`patches/`](patches/) with what
+each one buys and how it ends, and recorded in every release's `MANIFEST` — a release names the
+upstream ref *and* every patch applied over it. `gstreamer-rockchip` is unmodified.
+
+There is one patch today: `webrtcsink` inserts a software `videoconvert ! videoscale` in front of
+any encoder it does not recognise, and `mpph264enc` converts on the SoC's 2D accelerator instead —
+so a CPU pass over every frame is added to work the hardware was going to do anyway, on cores the
+robot's control loop shares. [`patches/README.md`](patches/README.md) has the reasoning, the
+trade-off it accepts, and the route upstream that would delete it.
+
+Together the ref and the patch list are both the licence answer and the reason a media bug found on
 a robot can be traced to a specific build.
 
 This repository's own build scripts are Apache-2.0, matching the daemon.

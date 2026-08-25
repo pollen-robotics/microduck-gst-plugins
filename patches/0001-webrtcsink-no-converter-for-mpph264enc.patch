@@ -1,0 +1,28 @@
+--- a/net/webrtc/src/webrtcsink/imp.rs
++++ b/net/webrtc/src/webrtcsink/imp.rs
+@@ -685,6 +685,25 @@
+ 
+                 ret.add_many([&vapostproc])?;
+                 (vapostproc.clone(), vapostproc)
++            } else if codec
++                .encoder_factory()
++                .is_some_and(|factory| factory.name() == "mpph264enc")
++            {
++                // Rockchip's MPP encoder accepts NV12, I420, YUY2 and a dozen more formats on its
++                // sink pad, and performs any conversion it needs on the SoC's 2D accelerator
++                // (RGA) rather than on the CPU. So unlike the NVIDIA and VA cases above, what it
++                // wants is not a *better* converter but no converter at all: a software
++                // `videoconvert ! videoscale` in front of it is a full CPU pass over every frame,
++                // which on the four Cortex-A55s of an RK3566 is precisely the cost the hardware
++                // encoder exists to avoid.
++                //
++                // The trade-off, stated plainly: without `videoscale` this bin cannot resize, so
++                // the negotiated resolution has to be one the source already produces. That is
++                // true of the robot this is used on, which pins its caps upstream of the tee.
++                let identity = make_element("identity", None)?;
++
++                ret.add_many([&identity])?;
++                (identity.clone(), identity)
+             } else {
+                 let convert = make_element("videoconvert", None)?;
+                 let scale = make_element("videoscale", None)?;

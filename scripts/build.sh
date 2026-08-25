@@ -173,6 +173,21 @@ build_webrtc() {
     git clone -q --depth 1 --branch "$GST_PLUGINS_RS_REF" "$GST_PLUGINS_RS_REPO" "${src}/s" \
         || die "cannot clone ${GST_PLUGINS_RS_REPO} at ${GST_PLUGINS_RS_REF}"
 
+    # Our patches, applied in order and recorded in the MANIFEST. `--check` first so a patch that
+    # no longer applies stops the build here, naming itself, rather than producing a plugin that is
+    # quietly missing the change it was carried for.
+    for patch in "${ROOT}"/patches/*.patch; do
+        [ -e "$patch" ] || continue
+        name="$(basename "$patch")"
+        say "applying ${name}"
+        ( cd "${src}/s" && git apply --check "$patch" ) \
+            || die "${name} does not apply to ${GST_PLUGINS_RS_REF}.
+  It was written against a specific version of the file it touches. Re-cut it against this ref, or
+  drop it if upstream has taken the change — see patches/README.md."
+        ( cd "${src}/s" && git apply "$patch" ) || die "${name} failed to apply"
+        printf 'patch %s\n' "$name" >> "${DIST}/MANIFEST"
+    done
+
     install -d "$DIST" "$STAGE"
 
     # Two crates, not one: the same stack wants `libgstrswebrtc.so` *and* `libgstrsrtp.so`.
