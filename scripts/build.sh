@@ -37,6 +37,34 @@ case "$WANT" in
     *) die "unknown target: ${WANT} (both, rockchip, webrtc)" ;;
 esac
 
+# Apply this project's patches to a fresh checkout, and record each in the MANIFEST.
+#
+#   apply_patches <project> <checkout>
+#
+# `<project>` is a directory under `patches/`, named for the upstream it patches — the routing has
+# to be explicit, because a patch against `net/webrtc/src/webrtcsink/imp.rs` applied to the
+# rockchip tree fails in a way that reads like a stale patch rather than a misdirected one.
+#
+# `--check` runs first so a patch that no longer applies stops the build naming itself, rather
+# than producing a plugin quietly missing the change it was carried for.
+apply_patches() {
+    project="$1"
+    checkout="$2"
+    dir="${ROOT}/patches/${project}"
+    [ -d "$dir" ] || return 0
+    for patch in "$dir"/*.patch; do
+        [ -e "$patch" ] || continue
+        name="$(basename "$patch")"
+        say "applying ${project}/${name}"
+        ( cd "$checkout" && git apply --check "$patch" ) \
+            || die "${project}/${name} does not apply to this ref.
+  It was written against a specific version of the file it touches. Re-cut it against the pin, or
+  drop it if upstream has taken the change — see patches/README.md."
+        ( cd "$checkout" && git apply "$patch" ) || die "${project}/${name} failed to apply"
+        printf 'patch %s/%s\n' "$project" "$name" >> "${DIST}/MANIFEST"
+    done
+}
+
 check_environment() {
     [ "$(id -u)" = 0 ] || die "run as root — it installs build dependencies"
     arch="$(uname -m)"
@@ -112,6 +140,8 @@ build_rockchip() {
     git -C "${src}/s" checkout -q "$GST_ROCKCHIP_REF" \
         || die "${GST_ROCKCHIP_REF} is not on ${GST_ROCKCHIP_BRANCH}"
 
+    apply_patches gstreamer-rockchip "${src}/s"
+
     # `rkximage` and `kmssrc` are the X11 and KMS *sinks* in the same tree. A headless robot has
     # no use for either, and they are why the prebuilt Radxa deb depends on libx11-6. Dropping
     # them is the concrete thing building ourselves buys, beyond provenance.
@@ -173,20 +203,7 @@ build_webrtc() {
     git clone -q --depth 1 --branch "$GST_PLUGINS_RS_REF" "$GST_PLUGINS_RS_REPO" "${src}/s" \
         || die "cannot clone ${GST_PLUGINS_RS_REPO} at ${GST_PLUGINS_RS_REF}"
 
-    # Our patches, applied in order and recorded in the MANIFEST. `--check` first so a patch that
-    # no longer applies stops the build here, naming itself, rather than producing a plugin that is
-    # quietly missing the change it was carried for.
-    for patch in "${ROOT}"/patches/*.patch; do
-        [ -e "$patch" ] || continue
-        name="$(basename "$patch")"
-        say "applying ${name}"
-        ( cd "${src}/s" && git apply --check "$patch" ) \
-            || die "${name} does not apply to ${GST_PLUGINS_RS_REF}.
-  It was written against a specific version of the file it touches. Re-cut it against this ref, or
-  drop it if upstream has taken the change — see patches/README.md."
-        ( cd "${src}/s" && git apply "$patch" ) || die "${name} failed to apply"
-        printf 'patch %s\n' "$name" >> "${DIST}/MANIFEST"
-    done
+    apply_patches gst-plugins-rs "${src}/s"
 
     install -d "$DIST" "$STAGE"
 
